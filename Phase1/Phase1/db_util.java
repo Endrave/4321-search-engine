@@ -73,8 +73,9 @@ public class db_util{
 			RocksDB.loadLibrary();
 			Options options = new Options();
 			options.setCreateIfMissing(true);
-			RocksDB word_db = RocksDB.open(options,"../Phase1/db/word");
-
+			String db_name = new String ("../Phase1/db/"+args[0]);
+			System.out.println("Location : "+db_name);
+			RocksDB word_db = RocksDB.open(options,db_name);
 			util_wordlist(word_db); // debug test
 		}
 }

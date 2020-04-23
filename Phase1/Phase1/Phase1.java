@@ -114,15 +114,84 @@ public class Phase1{
 		if (word.length() > 1){
 			byte[] content = db.get(word.getBytes());
 		  
+			// changed from doc to D to save space and use: as the delimiter for doc id, use; as the delimiter of pos
 			// Create new key for new word
-			if (content == null) {  content = ("doc" + x + " " + y).getBytes();}
+			if (content == null) {  content = ("D" + x + ":" + y +";").getBytes();}
 		  
 			// Append existing key for word
-			else { content = (new String(content) + " doc" + x + " " + y).getBytes();}
+			else { content = (new String(content) + "D" + x + ":" + y +";").getBytes();}
 			db.put(word.getBytes(), content);
 		}
     }
-  
+	
+		// Start to regret mate, this overload function is to punish you not think through !
+	public static void addEntry(String word, int x, int y ,RocksDB dbx) throws RocksDBException {
+		if (word.length() > 1){
+			byte[] content = dbx.get(word.getBytes());
+		  
+			// changed from doc to D to save space and use: as the delimiter for doc id, use; as the delimiter of pos
+			// Create new key for new word
+			if (content == null) {  content = ("D" + x + ":" + y +";").getBytes();}
+		  
+			// Append existing key for word
+			else { content = (new String(content) + "D" + x + ":" + y +";").getBytes();}
+			dbx.put(word.getBytes(), content);
+		}
+    }
+	
+	
+	// rearrage the format of word_db
+	// during insertion it will be in a from of "Dx:y;" where x is the pageID ,y is the pos
+	// this function will group all the same pageID record in a form of "Dx:y,z;" which y,z is the postion(s);
+	// Never run this during searching! only call when a crawler is completed 	
+	
+	public static void util_wordlist(RocksDB word_db)throws RocksDBException{
+		
+		
+		RocksIterator iter = word_db.newIterator();
+		for(iter.seekToFirst(); iter.isValid(); iter.next()){
+			// Get raw data array
+			String raw = new String(iter.value());
+			System.out.println(iter.key()+"   "+raw);
+			// delimiter ;
+			String [] segment  = raw.split(";");
+			// Array for storing the temp result
+			String [] temp_list = null;
+			int list_count =0;
+			
+			// Do it for all the 
+			for(int i = 0; i< segment.length ;i++){
+			// delimiter : ,Before : only have pageID and count, after is pure pos  
+			String [] block = segment[i].split(":");
+			int j;
+			// check if anything in the temp list have the same doc_ID
+				for (j = 0; j< list_count;j++){
+					if(block[0].equals(temp_list[j].substring(0,block[0].length()))){
+					// if same ID exist perviously, append it with "," and the new value
+					temp_list[j] = new String(temp_list[j]+","+block[1]);
+					break;
+					}
+					// if it cannot be found and new instance to the temp_list
+					// with the value of block[0] + ":" + block[1]
+					// then increment count by 1
+					temp_list[list_count] = new String(block[0]+":" + block[1]);
+					
+					list_count++;
+				}
+			}
+			// After sorting all segemnt in the temp_list, join all segment into a single string
+			// for each end of pageID record append ";" at the end
+			String result = "";
+			for (int i =0; i<list_count ; i++)
+				result = new String(temp_list[i]+";");
+			// put bcak the new value
+			//word_db.put(iter.key(),result.getBytes());
+			
+			//Debug message
+			//System.out.println(new String(iter.key())+result);
+		}
+	}
+	
 	// Add URL Entry to DB
 	public int addUrl(String url , RocksDB url_db) throws RocksDBException
 	{
@@ -235,7 +304,7 @@ public class Phase1{
 		RocksIterator iter = db.newIterator();
 		for(iter.seekToFirst(); iter.isValid(); iter.next()) {
 			String temp = new String(iter.value());
-			String delimiter = new String("doc"+ i);
+			String delimiter = new String("D"+ i);
 			
 			if (countOccurences(temp,delimiter)>0){
 				printWriter.print(new String(iter.key()) + " " + countOccurences(temp,delimiter) + ";");
@@ -307,20 +376,20 @@ public class Phase1{
 	{
 		StopStem stopStem = new StopStem("stopwords.txt");
 		StopStem domain_iden = new StopStem("domain_Identifier.txt");
-		FileWriter fileWriter = new FileWriter("../Phase1_tyngam/spider_result.txt");
-		PrintWriter printWriter = new PrintWriter(fileWriter);
-		
-		String db_path = "../Phase1_tyngam/db/word";		
+		FileWriter fileWriter = new FileWriter("../Phase1/spider_result.txt");
+		PrintWriter printWriter = new PrintWriter(fileWriter);	
 		RocksDB.loadLibrary();
 
 		Options options = new Options();
 		options.setCreateIfMissing(true);
-		RocksDB url_db = RocksDB.open(options,"../Phase1_tyngam/db/URL");
-		RocksDB relation_db = RocksDB.open(options, "../Phase1_tyngam/db/Relation");
+		RocksDB url_db = RocksDB.open(options,"../Phase1/db/URL");
+		RocksDB relation_db = RocksDB.open(options, "../Phase1/db/Relation");
+		RocksDB title_db = RocksDB.open(options, "../Phase1/db/Title");
 
-		Phase1 crawler = new Phase1("http://www.cse.ust.hk/",db_path);
+		Phase1 crawler = new Phase1("http://www.cse.ust.hk/","../Phase1/db/word");
 		Vector<String> plinks = crawler.extractLinks();
-
+		
+		
 		// Parent Link: One Off
 		int doc_id = crawler.addUrl(crawler.url,url_db);
 		Vector<String> words = crawler.extractWords();
@@ -329,6 +398,17 @@ public class Phase1{
 				String wd = stopStem.stem(words.get(i));
 				if (stopStem.isStopWord(wd) == false){
 					crawler.addEntry(wd,doc_id ,i);
+				}
+			}
+		}
+		// Get the title
+		String title = Jsoup.connect(crawler.url).get().title();
+		String [] t_words= title.split(" ");
+		for(int i = 0; i < t_words.length; i++){   //insert word into title_db
+			if (stopStem.isStopWord(t_words[i]) == false){
+				String wd = stopStem.stem(t_words[i]);
+				if (stopStem.isStopWord(wd) == false){
+					addEntry(wd,doc_id,i,title_db);
 				}
 			}
 		}
@@ -348,6 +428,7 @@ public class Phase1{
 		}else{
 			writing (printWriter,crawler,crawler,doc_id,psize,0, relation_db);
 		}
+		
 						
 		//2. recursive part
 		for (int j = 1; j < 31;j++){
@@ -360,6 +441,18 @@ public class Phase1{
 					String wd = stopStem.stem(cwords.get(i));
 					if (stopStem.isStopWord(wd) == false){
 						crawler.addEntry(wd,doc_id ,i);
+					}
+				}
+			}
+			
+			// Get the title
+			title = Jsoup.connect(child.url).get().title();
+			t_words= title.split(" ");
+			for(int i = 0; i < t_words.length; i++){   //insert word into title_db
+				if (stopStem.isStopWord(t_words[i]) == false){
+					String wd = stopStem.stem(t_words[i]);
+					if (stopStem.isStopWord(wd) == false){
+						addEntry(wd,doc_id,i,title_db);
 					}
 				}
 			}
@@ -378,6 +471,7 @@ public class Phase1{
 				writing (printWriter,crawler,child,doc_id,size,0, relation_db);
 			}
 		}
+		
 		printWriter.close();
 	}	
 }
